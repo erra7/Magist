@@ -1,0 +1,116 @@
+USE magist;
+#What categories of tech products does Magist have?
+SELECT product_category_name_english FROM product_category_name_translation;
+
+
+#How many products of these tech categories have been sold (within the time window of the database snapshot)? What percentage does that represent from the overall number of products sold?
+SELECT SUM(products_sold) AS tech_products FROM
+(SELECT 
+	product_category_name_english, 
+    count(product_category_name_english) as products_sold
+FROM 
+	order_items oi 
+		LEFT JOIN products p ON oi.product_id = p.product_id 
+		LEFT JOIN product_category_name_translation c ON p.product_category_name = c.product_category_name
+WHERE product_category_name_english IN ("audio", "electronics", "computers_accessories", "pc_gamer", "computers", "tablets_printing_image", "telephony")
+GROUP BY product_category_name_english) a;
+
+#What’s the average price of the products being sold?
+SELECT product_id, AVG(price) AS avg_price
+FROM order_items
+GROUP BY product_id;
+
+-- % of tech products sold
+SELECT 
+	(SELECT SUM(products_sold) AS tech_products FROM
+		(SELECT 
+				product_category_name_english, 
+				count(product_category_name_english) as products_sold
+			FROM 
+				order_items oi 
+					LEFT JOIN products p ON oi.product_id = p.product_id 
+					LEFT JOIN product_category_name_translation c ON p.product_category_name = c.product_category_name
+		WHERE product_category_name_english IN ("audio", "electronics", "computers_accessories", "pc_gamer", "computers", "tablets_printing_image", "telephony")
+		GROUP BY product_category_name_english) a) /
+	(SELECT COUNT(*) FROM order_items) * 100 AS percentage_tech_products;
+
+/* Are expensive tech products popular?
+
+ Expensive products: price > 100 */
+
+-- total expensive tech products sold = 4437 (about 28% of total tech products)
+SELECT SUM(products_sold) FROM (
+SELECT 
+	product_category_name_english, 
+    count(product_category_name_english) as products_sold
+FROM 
+	order_items oi 
+		LEFT JOIN products p ON oi.product_id = p.product_id 
+		LEFT JOIN product_category_name_translation c ON p.product_category_name = c.product_category_name
+WHERE product_category_name_english IN ("audio", "electronics", "computers_accessories", "pc_gamer", "computers", "tablets_printing_image", "telephony")
+	AND oi.price > 100
+GROUP BY product_category_name_english) a;
+
+
+-- How many sellers are there?
+SELECT COUNT(*) AS Sellers FROM sellers;
+
+
+-- What’s the average monthly revenue of Magist’s sellers? --4392
+SELECT ROUND(AVG(revenue)) AS avg_revenue FROM(
+	SELECT 
+		s.seller_id, 
+		ROUND(SUM(oi.price)) AS revenue 
+	FROM sellers s
+		LEFT JOIN order_items oi
+		ON s.seller_id = oi.seller_id
+	GROUP BY s.seller_id
+	ORDER BY revenue DESC
+	) a;
+
+-- -- What’s the average revenue of sellers that sell tech products?
+SELECT rym.seller_id, AVG(rym.revenue_ym) AS avg_revenue
+FROM (
+	SELECT YEAR(oi.shipping_limit_date), MONTH(oi.shipping_limit_date), oi.seller_id, SUM(oi.price) AS revenue_ym  
+	FROM order_items oi
+    LEFT JOIN products p ON oi.product_id = p.product_id
+	WHERE p.product_category_name IN (SELECT product_category_name FROM tech_categories)
+    GROUP BY YEAR(oi.shipping_limit_date), MONTH(oi.shipping_limit_date), oi.seller_id
+    ) rym
+GROUP BY rym.seller_id
+ORDER BY AVG(rym.revenue_ym) DESC;
+
+-- In relation to the delivery time:
+
+-- -- What’s the average time between the order being placed and the product being delivered?
+-- -- NOTES: how to get the average time in time format that makes sense to human perspective?
+SELECT ROUND(AVG(odt.days_diff)) AS day_deliver_avg, AVG(odt.time_diff) AS time_deliver_svg
+FROM (
+	SELECT 
+		order_delivered_customer_date, order_approved_at, 
+		TIMEDIFF(order_delivered_customer_date, order_approved_at) AS time_diff, 
+		ROUND(HOUR(TIMEDIFF(order_delivered_customer_date, order_approved_at))/24) AS days_diff
+	FROM orders
+    ) odt;
+
+-- -- How many orders are delivered on time vs orders delivered with a delay?
+SELECT 
+	CASE 
+		WHEN DATE(order_delivered_customer_date) <= DATE(order_estimated_delivery_date) THEN 'On date'
+		ELSE 'Delay'
+    END AS deliver_status, 
+    COUNT(order_id) AS orders_count
+FROM orders
+WHERE order_status = 'delivered'
+GROUP BY deliver_status;
+
+-- -- Is there any pattern for delayed orders, e.g. big products being delayed more often?
+SELECT *, 
+	CASE 
+		WHEN DATE(order_delivered_customer_date) <= DATE(order_estimated_delivery_date) THEN 'On date'
+		ELSE 'Delay'
+    END AS deliver_status, 
+    TIMEDIFF(order_delivered_customer_date, order_approved_at) AS time_diff, 
+    ROUND(HOUR(TIMEDIFF(order_delivered_customer_date, order_approved_at))/24) AS days_diff
+FROM orders
+WHERE order_status = 'delivered' AND NOT DATE(order_delivered_customer_date) <= DATE(order_estimated_delivery_date); 
